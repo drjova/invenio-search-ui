@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of Invenio.
-# Copyright (C) 2015 CERN.
+# Copyright (C) 2015, 2016 CERN.
 #
 # Invenio is free software; you can redistribute it
 # and/or modify it under the terms of the GNU General Public License as
@@ -63,18 +63,23 @@ from __future__ import absolute_import, print_function
 from os.path import dirname, join
 
 import jinja2
-from flask import Flask, jsonify, request
+from flask import Flask
 from flask_babelex import Babel
 from flask_cli import FlaskCLI
 from invenio_assets import InvenioAssets
 from invenio_db import InvenioDB, db
 from invenio_records import InvenioRecords
-from invenio_search import InvenioSearch, Query, current_search_client
+from invenio_search import InvenioSearch
 from invenio_theme import InvenioTheme
 
 from invenio_search_ui import InvenioSearchUI
 from invenio_search_ui.bundles import js
 from invenio_search_ui.views import blueprint
+
+from invenio_pidstore import InvenioPIDStore
+from invenio_records_rest import InvenioRecordsREST
+
+from invenio_records_ui import InvenioRecordsUI
 
 # Create Flask application
 app = Flask(__name__)
@@ -85,7 +90,7 @@ app.config.update(
     CELERY_EAGER_PROPAGATES_EXCEPTIONS=True,
     CELERY_RESULT_BACKEND="cache",
     DEBUG=True,
-    SEARCH_UI_SEARCH_API='invenio_search_ui.api',
+    SEARCH_UI_SEARCH_API='invenio_records_rest.recid_list',
     SEARCH_UI_BASE_TEMPLATE='invenio_theme/page.html',
 )
 
@@ -103,6 +108,11 @@ InvenioTheme(app)
 InvenioRecords(app)
 InvenioSearch(app)
 InvenioSearchUI(app)
+InvenioPIDStore(app)
+InvenioRecordsREST(app)
+
+InvenioRecords(app)
+InvenioRecordsUI(app)
 
 assets = InvenioAssets(app)
 assets.init_cli(app.cli)
@@ -120,9 +130,11 @@ def fixtures():
 def records():
     """Load records."""
     import pkg_resources
-    from invenio_records.api import Record
+    import uuid
     from dojson.contrib.marc21 import marc21
     from dojson.contrib.marc21.utils import create_record, split_blob
+    from invenio_pidstore.models import PersistentIdentifier, PIDStatus
+    from invenio_records.api import Record
 
     # pkg resources the demodata
     data_path = pkg_resources.resource_filename(
@@ -130,44 +142,41 @@ def records():
     )
     with open(data_path) as source:
         with db.session.begin_nested():
-            for data in split_blob(source.read()):
-                Record.create(marc21.do(create_record(data)))
+            for index, data in enumerate(split_blob(source.read()), start=1):
+                # create uuid
+                rec_uuid = uuid.uuid4()
+                # create pid
+                rec_pid = str(index)
+                # create PID
+                PersistentIdentifier.create(
+                    'recid', rec_pid, object_type='rec', object_uuid=rec_uuid,
+                    status=PIDStatus.REGISTERED
+                )
+                # do translate
+                record = marc21.do(create_record(data))
+                # update with control number
+                record.update({'control_number': rec_pid})
+                # create record
+                Record.create(record, id_=rec_uuid)
+
+# register the blueprints
+app.register_blueprint(blueprint)
 
 
-@blueprint.route('/api', methods=['GET', 'POST'])
-def api():
-    """Search API for search UI demo.
-
-    .. note::
-
-        WARNING! This search API is just for demo proposes only.
-
-    """
-    page = request.values.get('page', 1, type=int)
-    size = request.values.get('size', 1, type=int)
-    query = Query(request.values.get('q', ''))[(page-1)*size:page*size]
-    # dummy facets
+# Add the facets
+def facets(query, **kwargs):
+    """Enhance query with facets."""
     query.body["aggs"] = {
-        "by_body": {
+        "author": {
             "terms": {
-                "field": "summary.summary"
+                "field": "added_entry_personal_name.personal_name"
             }
         },
-        "by_title": {
+        "title": {
             "terms": {
                 "field": "title_statement.title"
             }
         }
     }
-    response = current_search_client.search(
-        index=request.values.get('index', 'records'),
-        doc_type=request.values.get('type'),
-        body=query.body,
-    )
-    return jsonify(**response)
 
-# register the blueprints
-app.register_blueprint(blueprint)
-
-if __name__ == "__main__":
-    app.run()
+app.config['SEARCH_QUERY_ENHANCERS'] = [facets]
