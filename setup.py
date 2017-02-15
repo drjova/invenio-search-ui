@@ -64,7 +64,7 @@ install_requires = [
     'Flask-BabelEx>=0.9.2',
     'Flask>=0.11.1',
     'angular-gettext-babel>=0.1',
-    'invenio-assets>=1.0.0b4',
+    'invenio-assets>=1.0.0b6',
 ]
 
 packages = find_packages()

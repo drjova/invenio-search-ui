@@ -33,11 +33,11 @@ from pkg_resources import resource_filename
 css = Bundle(
     Bundle(
         'scss/invenio_search_ui/search.scss',
-        filters='scss, cleancss',
+        filters='scss,cleancssurl',
     ),
     Bundle(
         'node_modules/angular-loading-bar/build/loading-bar.css',
-        filters='cleancss',
+        filters='cleancssurl',
     ),
     output='gen/search.%(version)s.css'
 )
